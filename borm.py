@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8  -*-
 # Created by mqingyn on 2015/2/10.
+
 import json
 import weakref
 import itertools
@@ -34,6 +35,7 @@ class Field(object):
         self.__info = kw.get('info', '')
         self._name = None
         self._model = None
+
 
     @property
     def default(self):
@@ -79,6 +81,7 @@ class BuildinTypeField(Field):
 
 
     def check(self, value):
+
         if value is not None:
             if not isinstance(value, self.datatype):
                 try:
@@ -95,7 +98,34 @@ class BuildinTypeField(Field):
             return self.default
 
 
-class BOField(Field):
+class OriginCheckMixin(object):
+    checked_err = None
+
+    def __init__(self, **kw):
+
+        self.__origin_value = None
+        self.__quiet_check = kw.pop('quiet_check', False)
+        super(OriginCheckMixin, self).__init__(**kw)
+
+
+    @property
+    def origin_value(self):
+        return self.__origin_value
+
+    def check(self, value):
+
+        try:
+            return super(OriginCheckMixin, self).check(value)
+        except Exception as e:
+            if self.__quiet_check:
+                self.__origin_value = value
+                self.checked_err = e
+                return self.default
+            else:
+                raise
+
+
+class BOField(OriginCheckMixin, Field):
     def __init__(self, **kw):
         datatype = kw.pop("datatype", '')
         if not issubclass(datatype, BOModel):
@@ -113,7 +143,7 @@ class BOField(Field):
             return self.default
 
 
-class StringField(BuildinTypeField):
+class StringField(OriginCheckMixin, BuildinTypeField):
     def __init__(self, encoding='utf8', blank=False, **kw):
         self.__encoding = encoding
         self._init(encoding, blank, **kw)
@@ -182,7 +212,7 @@ class _BODict(dict):
                 for k, v in self.iteritems()}
 
 
-class ListField(BuildinTypeField):
+class ListField(OriginCheckMixin, BuildinTypeField):
     def __init__(self, generictype=None, ruleout=True, **kw):
         default = kw.pop("default", [])
         self.__generictype = generictype
@@ -198,7 +228,7 @@ class ListField(BuildinTypeField):
                 return value
 
 
-class DictField(BuildinTypeField):
+class DictField(OriginCheckMixin, BuildinTypeField):
     def __init__(self, generictype=None, ruleout=True, **kw):
         default = kw.pop("default", {})
         self.__generictype = generictype
@@ -215,19 +245,43 @@ class DictField(BuildinTypeField):
                 return value
 
 
-class FloatField(BuildinTypeField):
+def _check_num(minv, maxv, val, dtype):
+    if maxv < minv:
+        raise FieldError('max value must be bigger than min value.')
+    if minv is not None:
+        val = max(val, dtype(minv))
+    if maxv is not None:
+        val = min(val, dtype(maxv))
+
+    return val
+
+
+class FloatField(OriginCheckMixin, BuildinTypeField):
     def __init__(self, **kw):
         default = kw.pop("default", 0.0)
+        self.minv = kw.pop("min", None)
+        self.maxv = kw.pop("max", None)
+
         super(FloatField, self).__init__(default=default, datatype=float, **kw)
 
+    def check(self, value):
+        val = super(FloatField, self).check(value)
+        return _check_num(self.minv, self.maxv, val, float)
 
-class IntegerField(BuildinTypeField):
+
+class IntegerField(OriginCheckMixin, BuildinTypeField):
     def __init__(self, **kw):
         default = kw.pop("default", 0)
+        self.minv = kw.pop("min", None)
+        self.maxv = kw.pop("max", None)
         super(IntegerField, self).__init__(default=default, datatype=int, **kw)
 
+    def check(self, value):
+        val = super(IntegerField, self).check(value)
+        return _check_num(self.minv, self.maxv, val, int)
 
-class BoolField(BuildinTypeField):
+
+class BoolField(OriginCheckMixin, BuildinTypeField):
     def __init__(self, **kw):
         default = kw.pop("default", False)
         super(BoolField, self).__init__(default=default, datatype=bool, **kw)
@@ -238,7 +292,7 @@ class BoolField(BuildinTypeField):
             if val in ('false', 'null', 'none', '0',):
                 value = False
 
-        super(BoolField, self).check(value)
+        return super(BoolField, self).check(value)
 
 
 class BOMetaclass(type):
