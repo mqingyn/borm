@@ -1,7 +1,6 @@
-#!/usr/bin/env python
+# !/usr/bin/env python
 # -*- coding: utf-8  -*-
 # Created by mqingyn on 2015/2/10.
-
 import json
 import weakref
 import itertools
@@ -33,9 +32,14 @@ class Field(object):
         self.__default = kw.get('default', None)
         self.__required = kw.get('required', False)
         self.__info = kw.get('info', '')
+        self.__showname = kw.get('name', None)
+        self.__quiet_check = kw.get('quiet_check', False)
         self._name = None
         self._model = None
 
+    @property
+    def name(self):
+        return self.__showname or self._name
 
     @property
     def default(self):
@@ -59,6 +63,10 @@ class Field(object):
     def required(self):
         return self.__required
 
+    @property
+    def quiet_check(self):
+        return self.__quiet_check
+
     def __str__(self):
         return '<%s:%s>' % (self.__class__.__name__, str(self.datatype),)
 
@@ -79,17 +87,19 @@ class BuildinTypeField(Field):
     def convert_args(self):
         return self.__convert_args
 
-
     def check(self, value):
 
         if value is not None:
             if not isinstance(value, self.datatype):
                 try:
+                    if isinstance(value, basestring) and not value:
+                        value = self.default
+
                     if self.convert_args:
                         return self.datatype(value, **self.convert_args)
                     return self.datatype(value)
                 except:
-                    raise FieldError('invalid check %s,need %s.' % (type(value), str(self.datatype),))
+                    raise FieldError('invalid check field "%s" %s,need %s.' % (self.name, type(value), str(self.datatype),))
 
             else:
                 return value
@@ -106,7 +116,6 @@ class OriginCheckMixin(object):
         self.__origin_value = None
         self.__quiet_check = kw.pop('quiet_check', False)
         super(OriginCheckMixin, self).__init__(**kw)
-
 
     @property
     def origin_value(self):
@@ -333,15 +342,23 @@ class BOMetaclass(type):
 class BOModel(dict):
     __metaclass__ = BOMetaclass
 
-    def __init__(self, **kwargs):
+    def __init__(self, quiet_check=False, **kwargs):
         kw = {}
+        self.quiet_check = quiet_check
         for k, v in self.__mappings__.iteritems():
 
             if isinstance(v, Field):
                 v._model = weakref.proxy(self)
                 v._name = k
                 if k in kwargs:
-                    kw[k] = v.check(kwargs.pop(k))
+                    try:
+                        kw[k] = v.check(kwargs.pop(k))
+                    except:
+                        if quiet_check or v.quiet_check:
+                            kw[k] = v.check(v.default)
+                        else:
+                            raise
+
                 else:
                     kw[k] = v.check(v.default)
 
@@ -395,7 +412,14 @@ class BOModel(dict):
 
     def __set(self, key, value):
         if key in self.__mappings__:
-            value = self.__mappings__[key].check(value)
+            field = self.__mappings__[key]
+            try:
+                value = field.check(value)
+            except:
+                if self.quiet_check or field.quiet_check:
+                    value = field.check(field.default)
+                else:
+                    raise
 
         self[key] = value
 
@@ -438,11 +462,12 @@ class BOModel(dict):
             return False
 
         if exclude:
-            return {k: v_tolist_(k, v) for k, v in self.__mappings__.iteritems()
-                    if k not in exclude and not ignoreit_(k, v)}
+            func = lambda k: k not in exclude
         else:
-            return {k: v_tolist_(k, v) for k, v in self.__mappings__.iteritems()
-                    if k in include and not ignoreit_(k, v)}
+            func = lambda k: k in include
+
+        return {v.name: v_tolist_(k, v) for k, v in self.__mappings__.iteritems()
+                if func(k) and not ignoreit_(k, v)}
 
     def dumps(self, dicts=None, exclude=None, include=None, **kwargs):
         dict = dicts or self.todict(exclude=exclude, include=include)
@@ -460,7 +485,6 @@ class BOModel(dict):
                 return l
 
         return [_(l) for l in lists]
-
 
     @classmethod
     def parse_dict(cls, dicts, ignore_null=False, ignore_default=False):
