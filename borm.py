@@ -362,7 +362,6 @@ class BOModel(dict):
                 else:
                     kw[k] = v.check(v.default)
 
-        kw.update(kwargs)
 
         super(BOModel, self).__init__(**kw)
 
