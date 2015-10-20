@@ -4,7 +4,7 @@
 import json
 import weakref
 import itertools
-
+import inspect
 
 class BormError(Exception):
     def __init__(self, reason):
@@ -375,7 +375,12 @@ class BOModel(dict):
         def vald_(key, val):
             validator_method = None
             for valid in self.__validator__[::-1]:
-                validator_method = getattr(valid, 'validate_%s' % key, None)
+                if inspect.isclass(valid):
+                    valid_inst = valid()
+                else:
+                    valid_inst = valid
+                validator_method = getattr(valid_inst, 'validate_%s' % key, None)
+
                 if validator_method:
                     break
             try:
